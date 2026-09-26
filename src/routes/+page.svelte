@@ -13,7 +13,7 @@
   } from 'carbon-components-svelte';
 
   type ActivityType = '音素' | '单词' | '句子' | '练习';
-  type ViewMode = 'compose' | 'path' | 'issues' | 'versions';
+  type ViewMode = 'compose' | 'path' | 'issues' | 'versions' | 'workbook';
   type PreviewWidth = 'phone' | 'tablet' | 'desktop';
   type IssueLevel = 'error' | 'warning' | 'info';
 
@@ -66,7 +66,70 @@
     detail: string;
   }
 
+  interface PracticeAttempt {
+    id: string;
+    activityId: string;
+    score: number;
+    missedPhonemes: string[];
+    practicedAt: string;
+  }
+
+  interface Assignment {
+    activityId: string;
+    assignedAt: string;
+    snapshotTitle: string;
+    snapshotType: ActivityType;
+    snapshotPhonemes: string[];
+  }
+
+  interface Student {
+    id: string;
+    name: string;
+    createdAt: string;
+    assignments: Assignment[];
+    attempts: PracticeAttempt[];
+  }
+
+  interface Blocker {
+    id: string;
+    title: string;
+    reason: '未布置' | '未过关';
+  }
+
+  type WorkStatus = 'passed' | 'blocked' | 'ready' | 'removed';
+
+  interface WorkbookRow {
+    activityId: string;
+    inCourse: boolean;
+    title: string;
+    type: ActivityType;
+    phonemes: string[];
+    assignedAt: string;
+    status: WorkStatus;
+    streak: number;
+    needed: number;
+    attemptCount: number;
+    lastScore: number | null;
+    bestScore: number | null;
+    lastMissed: string[];
+    blockers: Blocker[];
+  }
+
+  interface StudentSummary {
+    assigned: number;
+    passed: number;
+    ready: number;
+    blocked: number;
+    removed: number;
+    stuck: Array<{ activityId: string; title: string; blockers: Blocker[] }>;
+    missedTop: Array<{ phoneme: string; count: number }>;
+    recent: Array<{ id: string; title: string; score: number; missed: string[]; at: string }>;
+  }
+
   const STORAGE_KEY = 'sologsb-1026-phonics-course-v1';
+  const STUDENTS_KEY = 'sologsb-1026-phonics-students-v1';
+  const PASS_SCORE = 80;
+  const PASS_STREAK = 2;
   const confusablePairs = [
     ['/b/', '/p/'], ['/d/', '/t/'], ['/f/', '/v/'], ['/m/', '/n/'], ['/ɪ/', '/iː/'], ['/æ/', '/e/']
   ];
@@ -157,6 +220,39 @@
     ]
   });
 
+  const initialStudents = (): Student[] => [
+    {
+      id: 's-1', name: '林小满', createdAt: '2026-09-24T17:00:00+08:00',
+      assignments: [
+        { activityId: 'a-1', assignedAt: '2026-09-24T17:05:00+08:00', snapshotTitle: '听音游戏：认识 /m/', snapshotType: '音素', snapshotPhonemes: ['/m/'] },
+        { activityId: 'a-2', assignedAt: '2026-09-24T17:06:00+08:00', snapshotTitle: '首音识别：/s/ 与 /m/', snapshotType: '音素', snapshotPhonemes: ['/s/', '/m/'] },
+        { activityId: 'a-3', assignedAt: '2026-09-24T17:07:00+08:00', snapshotTitle: '拼读短词：sat', snapshotType: '单词', snapshotPhonemes: ['/s/', '/æ/', '/t/'] },
+        { activityId: 'a-4', assignedAt: '2026-09-24T17:08:00+08:00', snapshotTitle: '听音选图：m / s 开头', snapshotType: '练习', snapshotPhonemes: ['/m/', '/s/'] }
+      ],
+      attempts: [
+        { id: 'at-1', activityId: 'a-1', score: 86, missedPhonemes: [], practicedAt: '2026-09-25T15:10:00+08:00' },
+        { id: 'at-2', activityId: 'a-1', score: 91, missedPhonemes: [], practicedAt: '2026-09-25T15:40:00+08:00' },
+        { id: 'at-3', activityId: 'a-2', score: 72, missedPhonemes: ['/s/'], practicedAt: '2026-09-25T16:05:00+08:00' },
+        { id: 'at-4', activityId: 'a-2', score: 84, missedPhonemes: [], practicedAt: '2026-09-26T10:20:00+08:00' }
+      ]
+    },
+    {
+      id: 's-2', name: '陈一诺', createdAt: '2026-09-24T17:10:00+08:00',
+      assignments: [
+        { activityId: 'a-1', assignedAt: '2026-09-24T17:12:00+08:00', snapshotTitle: '听音游戏：认识 /m/', snapshotType: '音素', snapshotPhonemes: ['/m/'] },
+        { activityId: 'a-2', assignedAt: '2026-09-24T17:13:00+08:00', snapshotTitle: '首音识别：/s/ 与 /m/', snapshotType: '音素', snapshotPhonemes: ['/s/', '/m/'] },
+        { activityId: 'a-5', assignedAt: '2026-09-24T17:14:00+08:00', snapshotTitle: '短元音 /æ/ 的口型', snapshotType: '音素', snapshotPhonemes: ['/æ/'] }
+      ],
+      attempts: [
+        { id: 'at-5', activityId: 'a-1', score: 90, missedPhonemes: [], practicedAt: '2026-09-25T14:00:00+08:00' },
+        { id: 'at-6', activityId: 'a-1', score: 95, missedPhonemes: [], practicedAt: '2026-09-25T14:20:00+08:00' },
+        { id: 'at-7', activityId: 'a-2', score: 83, missedPhonemes: ['/m/'], practicedAt: '2026-09-25T16:30:00+08:00' },
+        { id: 'at-8', activityId: 'a-2', score: 88, missedPhonemes: [], practicedAt: '2026-09-26T09:10:00+08:00' },
+        { id: 'at-9', activityId: 'a-5', score: 78, missedPhonemes: ['/æ/'], practicedAt: '2026-09-26T09:40:00+08:00' }
+      ]
+    }
+  ];
+
   let course: Course = initialCourse();
   let selectedActivityId = course.activities[0]?.id ?? '';
   let activeView: ViewMode = 'compose';
@@ -172,6 +268,21 @@
   let selectedActivity: Activity | null = null;
   let diagnostics: Diagnostic[] = [];
   let versionDiff: VersionDiff[] = [];
+  let students: Student[] = initialStudents();
+  let selectedStudentId = students[0]?.id ?? '';
+  let selectedPracticeActivityId = '';
+  let assignPickerId = '';
+  let newStudentName = '';
+  let practiceScore = '85';
+  let practiceMissed: string[] = [];
+  let practiceMissedExtra = '';
+  let practiceError = '';
+  let confirmingStudentDelete = false;
+  let selectedStudent: Student | null = null;
+  let workbookRows: WorkbookRow[] = [];
+  let studentSummary: StudentSummary | null = null;
+  let assignableActivities: Activity[] = [];
+  let practiceRow: WorkbookRow | null = null;
 
   $: selectedActivity = course.activities.find((activity) => activity.id === selectedActivityId) ?? course.activities[0] ?? null;
   $: diagnostics = analyzeCourse(course);
@@ -179,6 +290,17 @@
   $: errorCount = diagnostics.filter((issue) => issue.level === 'error').length;
   $: warningCount = diagnostics.filter((issue) => issue.level === 'warning').length;
   $: totalMinutes = course.activities.reduce((sum, activity) => sum + activity.duration, 0);
+  $: selectedStudent = students.find((student) => student.id === selectedStudentId) ?? students[0] ?? null;
+  $: workbookRows = selectedStudent ? buildWorkbookRows(selectedStudent, course) : [];
+  $: studentSummary = selectedStudent ? summarizeStudent(selectedStudent, course) : null;
+  $: assignableActivities = selectedStudent
+    ? course.activities.filter((activity) => !selectedStudent.assignments.some((item) => item.activityId === activity.id))
+    : [];
+  $: if (!assignableActivities.some((activity) => activity.id === assignPickerId)) assignPickerId = assignableActivities[0]?.id ?? '';
+  $: practiceRow = workbookRows.find((row) => row.activityId === selectedPracticeActivityId) ?? null;
+  $: if (workbookRows.length && !workbookRows.some((row) => row.activityId === selectedPracticeActivityId)) {
+    selectedPracticeActivityId = (workbookRows.find((row) => row.status === 'ready') ?? workbookRows[0]).activityId;
+  }
 
   onMount(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -191,6 +313,15 @@
         savedLabel = `已恢复 · ${formatTime(course.updatedAt)}`;
       } catch {
         localStorage.removeItem(STORAGE_KEY);
+      }
+    }
+    const storedStudents = localStorage.getItem(STUDENTS_KEY);
+    if (storedStudents) {
+      try {
+        students = migrateStudents(JSON.parse(storedStudents));
+        selectedStudentId = students[0]?.id ?? '';
+      } catch {
+        localStorage.removeItem(STUDENTS_KEY);
       }
     }
     hydrated = true;
@@ -385,6 +516,224 @@
   function focusIssue(issue: Diagnostic): void {
     selectedActivityId = issue.activityId;
     activeView = 'compose';
+  }
+
+  function migrateStudents(value: unknown): Student[] {
+    if (!Array.isArray(value)) return initialStudents();
+    return value.filter((item): item is Student =>
+      Boolean(item) && typeof item.id === 'string' && typeof item.name === 'string' &&
+      Array.isArray(item.assignments) && Array.isArray(item.attempts)
+    );
+  }
+
+  function commitStudents(recipe: (draft: Student[]) => void): void {
+    const next = structuredClone(students);
+    recipe(next);
+    students = next;
+    persistStudents();
+  }
+
+  function persistStudents(): void {
+    if (!hydrated) return;
+    localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
+    savedLabel = `已保存 · ${formatTime(new Date().toISOString())}`;
+  }
+
+  function attemptsFor(student: Student, activityId: string): PracticeAttempt[] {
+    return student.attempts
+      .filter((attempt) => attempt.activityId === activityId)
+      .sort((a, b) => a.practicedAt.localeCompare(b.practicedAt));
+  }
+
+  function passStreakFor(student: Student, activityId: string): number {
+    const list = attemptsFor(student, activityId);
+    let streak = 0;
+    for (let index = list.length - 1; index >= 0; index -= 1) {
+      if (list[index].score >= PASS_SCORE) streak += 1;
+      else break;
+    }
+    return streak;
+  }
+
+  function activityTitleFor(student: Student, activityId: string, current: Course): string {
+    return current.activities.find((activity) => activity.id === activityId)?.title
+      ?? student.assignments.find((item) => item.activityId === activityId)?.snapshotTitle
+      ?? '已删除的活动';
+  }
+
+  function blockersFor(student: Student, activityId: string, current: Course): Blocker[] {
+    const activity = current.activities.find((item) => item.id === activityId);
+    if (!activity) return [];
+    return activity.dependencies
+      .filter((dependency) => passStreakFor(student, dependency) < PASS_STREAK)
+      .map((dependency) => ({
+        id: dependency,
+        title: activityTitleFor(student, dependency, current),
+        reason: student.assignments.some((item) => item.activityId === dependency) ? '未过关' as const : '未布置' as const
+      }));
+  }
+
+  function buildWorkbookRows(student: Student, current: Course): WorkbookRow[] {
+    const order = new Map(current.activities.map((activity, index) => [activity.id, index]));
+    return [...student.assignments]
+      .sort((a, b) => {
+        const ai = order.get(a.activityId) ?? Number.MAX_SAFE_INTEGER;
+        const bi = order.get(b.activityId) ?? Number.MAX_SAFE_INTEGER;
+        return ai !== bi ? ai - bi : a.assignedAt.localeCompare(b.assignedAt);
+      })
+      .map((assignment) => {
+        const live = current.activities.find((activity) => activity.id === assignment.activityId);
+        const attempts = attemptsFor(student, assignment.activityId);
+        const streak = passStreakFor(student, assignment.activityId);
+        const passed = streak >= PASS_STREAK;
+        const blockers = passed || !live ? [] : blockersFor(student, assignment.activityId, current);
+        const status: WorkStatus = !live ? 'removed' : passed ? 'passed' : blockers.length ? 'blocked' : 'ready';
+        const scores = attempts.map((attempt) => attempt.score);
+        return {
+          activityId: assignment.activityId,
+          inCourse: Boolean(live),
+          title: live?.title ?? assignment.snapshotTitle,
+          type: live?.type ?? assignment.snapshotType,
+          phonemes: live?.phonemes.length ? live.phonemes : assignment.snapshotPhonemes,
+          assignedAt: assignment.assignedAt,
+          status,
+          streak,
+          needed: Math.max(0, PASS_STREAK - streak),
+          attemptCount: attempts.length,
+          lastScore: attempts.at(-1)?.score ?? null,
+          bestScore: scores.length ? Math.max(...scores) : null,
+          lastMissed: attempts.at(-1)?.missedPhonemes ?? [],
+          blockers
+        };
+      });
+  }
+
+  function summarizeStudent(student: Student, current: Course): StudentSummary {
+    const rows = buildWorkbookRows(student, current);
+    const missed = new Map<string, number>();
+    student.attempts.forEach((attempt) => attempt.missedPhonemes.forEach((phoneme) => missed.set(phoneme, (missed.get(phoneme) ?? 0) + 1)));
+    return {
+      assigned: rows.length,
+      passed: rows.filter((row) => row.status === 'passed').length,
+      ready: rows.filter((row) => row.status === 'ready').length,
+      blocked: rows.filter((row) => row.status === 'blocked').length,
+      removed: rows.filter((row) => row.status === 'removed').length,
+      stuck: rows.filter((row) => row.status === 'blocked').map((row) => ({ activityId: row.activityId, title: row.title, blockers: row.blockers })),
+      missedTop: [...missed.entries()].map(([phoneme, count]) => ({ phoneme, count })).sort((a, b) => b.count - a.count).slice(0, 8),
+      recent: [...student.attempts]
+        .sort((a, b) => b.practicedAt.localeCompare(a.practicedAt))
+        .slice(0, 5)
+        .map((attempt) => ({
+          id: attempt.id,
+          title: activityTitleFor(student, attempt.activityId, current),
+          score: attempt.score,
+          missed: attempt.missedPhonemes,
+          at: attempt.practicedAt
+        }))
+    };
+  }
+
+  function statusLabel(status: WorkStatus): string {
+    return status === 'passed' ? '已过关' : status === 'blocked' ? '被挡住' : status === 'removed' ? '已移出课程' : '可练习';
+  }
+
+  function statusTagType(status: WorkStatus): 'green' | 'red' | 'teal' | 'cool-gray' {
+    return status === 'passed' ? 'green' : status === 'blocked' ? 'red' : status === 'removed' ? 'cool-gray' : 'teal';
+  }
+
+  function resetPracticeForm(): void {
+    practiceScore = '85';
+    practiceMissed = [];
+    practiceMissedExtra = '';
+    practiceError = '';
+  }
+
+  function selectStudent(id: string): void {
+    selectedStudentId = id;
+    confirmingStudentDelete = false;
+    const student = students.find((item) => item.id === id);
+    const firstReady = student ? buildWorkbookRows(student, course).find((row) => row.status === 'ready') : null;
+    selectedPracticeActivityId = firstReady?.activityId ?? student?.assignments[0]?.activityId ?? '';
+    resetPracticeForm();
+  }
+
+  function addStudent(): void {
+    const name = newStudentName.trim();
+    if (!name) return;
+    const id = `s-${Date.now()}`;
+    commitStudents((draft) => {
+      draft.push({ id, name, createdAt: new Date().toISOString(), assignments: [], attempts: [] });
+    });
+    newStudentName = '';
+    selectStudent(id);
+  }
+
+  function deleteStudent(): void {
+    if (!selectedStudent) return;
+    const id = selectedStudent.id;
+    commitStudents((draft) => {
+      const index = draft.findIndex((student) => student.id === id);
+      if (index >= 0) draft.splice(index, 1);
+    });
+    confirmingStudentDelete = false;
+    selectStudent(students[0]?.id ?? '');
+  }
+
+  function assignActivity(): void {
+    if (!selectedStudent || !assignPickerId) return;
+    const activity = course.activities.find((item) => item.id === assignPickerId);
+    if (!activity) return;
+    const studentId = selectedStudent.id;
+    commitStudents((draft) => {
+      const student = draft.find((item) => item.id === studentId);
+      if (!student || student.assignments.some((item) => item.activityId === activity.id)) return;
+      student.assignments.push({
+        activityId: activity.id,
+        assignedAt: new Date().toISOString(),
+        snapshotTitle: activity.title,
+        snapshotType: activity.type,
+        snapshotPhonemes: [...activity.phonemes]
+      });
+    });
+    selectedPracticeActivityId = activity.id;
+    resetPracticeForm();
+  }
+
+  function openPractice(activityId: string): void {
+    selectedPracticeActivityId = activityId;
+    resetPracticeForm();
+  }
+
+  function toggleMissedPhoneme(phoneme: string): void {
+    practiceMissed = practiceMissed.includes(phoneme)
+      ? practiceMissed.filter((item) => item !== phoneme)
+      : [...practiceMissed, phoneme];
+  }
+
+  function recordAttempt(): void {
+    if (!selectedStudent || !practiceRow || practiceRow.status === 'blocked' || practiceRow.status === 'removed') return;
+    const score = Number(practiceScore);
+    if (practiceScore.trim() === '' || !Number.isFinite(score) || score < 0 || score > 100) {
+      practiceError = '请输入 0–100 之间的分数。';
+      return;
+    }
+    const extra = practiceMissedExtra.split(/[\s,，、]+/).map((item) => item.trim()).filter(Boolean);
+    const missed = [...new Set([...practiceMissed, ...extra])];
+    const studentId = selectedStudent.id;
+    const activityId = practiceRow.activityId;
+    commitStudents((draft) => {
+      const student = draft.find((item) => item.id === studentId);
+      student?.attempts.push({
+        id: `at-${Date.now()}`,
+        activityId,
+        score: Math.round(score),
+        missedPhonemes: missed,
+        practicedAt: new Date().toISOString()
+      });
+    });
+    practiceMissed = [];
+    practiceMissedExtra = '';
+    practiceError = '';
   }
 
   function analyzeCourse(current: Course): Diagnostic[] {
@@ -597,6 +946,7 @@
     <button class:active={activeView === 'path'} on:click={() => activeView = 'path'}><span>02</span><b>学习路径</b><small>多屏幕顺序预览</small></button>
     <button class:active={activeView === 'issues'} on:click={() => activeView = 'issues'}><span>03</span><b>质量检查</b><small>音素、句子与反馈</small></button>
     <button class:active={activeView === 'versions'} on:click={() => activeView = 'versions'}><span>04</span><b>版本与复用</b><small>复制、存档与比较</small></button>
+    <button class:active={activeView === 'workbook'} on:click={() => activeView = 'workbook'}><span>05</span><b>学生补练</b><small>布置、记录与过关</small></button>
   </nav>
 
   {#if activeView === 'compose'}
@@ -803,6 +1153,174 @@
           </div>
         </Tile>
       </div>
+    </main>
+  {/if}
+
+  {#if activeView === 'workbook'}
+    <main class="workbook-layout">
+      <aside class="student-sidebar">
+        <div class="sidebar-heading">
+          <div><span class="kicker">STUDENTS</span><h3>学生名单</h3></div>
+          <Tag type="cool-gray">{students.length} 人</Tag>
+        </div>
+        <div class="student-add">
+          <TextInput size="sm" labelText="新建学生" placeholder="输入学生姓名" value={newStudentName} on:input={(event) => newStudentName = readText(event)} on:keydown={(event) => event.key === 'Enter' && addStudent()} />
+          <Button size="small" kind="primary" disabled={!newStudentName.trim()} on:click={addStudent}>建学生</Button>
+        </div>
+        <div class="student-list">
+          {#each students as student (student.id)}
+            {@const stats = summarizeStudent(student, course)}
+            <button class:selected={student.id === selectedStudent?.id} class="student-row" on:click={() => selectStudent(student.id)}>
+              <span class="student-avatar" aria-hidden="true">{student.name.slice(0, 1)}</span>
+              <span class="student-copy"><b>{student.name}</b><small>过关 {stats.passed}/{stats.assigned}{stats.blocked ? ` · 卡住 ${stats.blocked} 项` : ''}</small></span>
+              {#if stats.blocked}<i class="stuck-dot" title="有未过关的前置"></i>{/if}
+            </button>
+          {:else}
+            <p class="empty-state student-empty">还没有学生。先建一个学生，再给TA布置课程活动。</p>
+          {/each}
+        </div>
+        <div class="sidebar-help">连续两次练习 ≥ {PASS_SCORE} 分才算过关；记录保存在本机，关掉页面再回来可以接着练。</div>
+      </aside>
+
+      <section class="workbook-main">
+        {#if selectedStudent && studentSummary}
+          <Tile class="assign-card">
+            <div class="section-title">
+              <div><span class="kicker">ASSIGN</span><h3>给 {selectedStudent.name} 布置活动</h3><p>课程里新增的活动会先在这里等待布置，布置后才开始记录补练。</p></div>
+              <Tag type="cool-gray">{assignableActivities.length} 项待布置</Tag>
+            </div>
+            <div class="assign-controls">
+              <Select labelText="选择课程活动" selected={assignPickerId} on:change={(event) => assignPickerId = readText(event)}>
+                {#each assignableActivities as activity (activity.id)}
+                  <SelectItem value={activity.id} text={`${activity.title} · ${activity.type}`} />
+                {/each}
+              </Select>
+              <Button size="small" kind="primary" disabled={!assignPickerId} on:click={assignActivity}>布置</Button>
+            </div>
+            {#if !assignableActivities.length}<p class="empty-state assign-done">课程活动都已布置给 {selectedStudent.name}；之后新增的课程活动会出现在这里。</p>{/if}
+          </Tile>
+
+          <div class="assignment-list">
+            {#each workbookRows as row (row.activityId)}
+              <article class:selected={row.activityId === selectedPracticeActivityId} class="assignment-card {row.status}">
+                <div class="assignment-head">
+                  <span class="activity-type {row.type}">{row.type}</span>
+                  <b>{row.title}</b>
+                  <Tag type={statusTagType(row.status)}>{statusLabel(row.status)}</Tag>
+                </div>
+                <div class="assignment-meta">
+                  <span>布置于 {formatTime(row.assignedAt)}</span>
+                  <span>练习 {row.attemptCount} 次</span>
+                  {#if row.lastScore !== null}<span>最近 {row.lastScore} 分 · 最高 {row.bestScore} 分</span>{/if}
+                </div>
+                {#if row.status === 'passed'}
+                  <p class="assignment-note pass">已连续 {row.streak} 次达到 {PASS_SCORE} 分，顺利过关。</p>
+                {:else if row.status === 'ready'}
+                  <p class="assignment-note">还需连续 {row.needed} 次达到 {PASS_SCORE} 分（当前连续 {row.streak} 次）。</p>
+                {:else if row.status === 'blocked'}
+                  <p class="assignment-note blocked-note">被前置挡住：{#each row.blockers as blocker}<span class="blocker-chip">{blocker.title} · {blocker.reason}</span>{/each}</p>
+                {:else}
+                  <p class="assignment-note muted">已移出课程，补练记录保留在历史中。</p>
+                {/if}
+                {#if row.lastMissed.length}
+                  <div class="missed-line">上次读错：{#each row.lastMissed as phoneme}<span class="phoneme-chip static">{phoneme}</span>{/each}</div>
+                {/if}
+                <div class="assignment-actions">
+                  <Button size="small" kind={row.activityId === selectedPracticeActivityId ? 'primary' : 'ghost'} on:click={() => openPractice(row.activityId)}>{row.status === 'blocked' ? '查看卡点' : row.status === 'removed' ? '查看历史' : '记录练习'}</Button>
+                </div>
+              </article>
+            {:else}
+              <Tile class="all-clear"><h3>还没有布置活动</h3><p>从上方选择课程活动布置给 {selectedStudent.name}，练习结果会记录在这里。</p></Tile>
+            {/each}
+          </div>
+        {:else}
+          <Tile class="all-clear"><h3>先建一个学生</h3><p>在左侧输入姓名建学生，然后给TA布置课程活动、记录练习结果。</p></Tile>
+        {/if}
+      </section>
+
+      <aside class="workbook-inspector">
+        {#if selectedStudent && studentSummary}
+          <Tile class="compact-card">
+            <div class="section-title">
+              <div><span class="kicker">OVERVIEW</span><h3>{selectedStudent.name} 的补练概况</h3></div>
+              <Button size="small" kind="danger-ghost" on:click={() => confirmingStudentDelete = true}>删除学生</Button>
+            </div>
+            {#if confirmingStudentDelete}
+              <div class="confirm-bar">
+                <span>确定删除 {selectedStudent.name}？全部补练记录将一并删除。</span>
+                <div><Button size="small" kind="danger" on:click={deleteStudent}>确认删除</Button><Button size="small" kind="ghost" on:click={() => confirmingStudentDelete = false}>取消</Button></div>
+              </div>
+            {/if}
+            <div class="progress-strip">
+              <div><strong>{studentSummary.passed}</strong><span>已过关</span></div>
+              <div><strong>{studentSummary.ready}</strong><span>可练习</span></div>
+              <div><strong class:warn={studentSummary.blocked > 0}>{studentSummary.blocked}</strong><span>被挡住</span></div>
+              <div><strong>{studentSummary.assigned}</strong><span>已布置</span></div>
+            </div>
+            {#if studentSummary.stuck.length}
+              <div class="stuck-list">
+                <span class="mini-kicker">卡在这些前置上</span>
+                {#each studentSummary.stuck as item}
+                  <p>《{item.title}》← {item.blockers.map((blocker) => `${blocker.title}（${blocker.reason}）`).join('、')}</p>
+                {/each}
+              </div>
+            {/if}
+            {#if studentSummary.missedTop.length}
+              <div class="missed-summary">
+                <span class="mini-kicker">常错音素 · 该补的重点</span>
+                <div>{#each studentSummary.missedTop as item}<span class="phoneme-chip static">{item.phoneme} ×{item.count}</span>{/each}</div>
+              </div>
+            {/if}
+            {#if studentSummary.recent.length}
+              <div class="recent-list">
+                <span class="mini-kicker">最近练习</span>
+                {#each studentSummary.recent as item}
+                  <div class="recent-row"><b>{item.score} 分</b><span>{item.title}</span><small>{formatTime(item.at)}</small></div>
+                {/each}
+              </div>
+            {/if}
+          </Tile>
+
+          <Tile class="compact-card practice-desk">
+            <div class="section-title"><div><span class="kicker">PRACTICE DESK</span><h3>练习台</h3></div></div>
+            {#if practiceRow}
+              <h4 class="desk-title">{practiceRow.title}</h4>
+              <p class="desk-sub">{practiceRow.type} · 已连续达标 {practiceRow.streak}/{PASS_STREAK} 次 · 目标 ≥ {PASS_SCORE} 分</p>
+              {#if practiceRow.status === 'blocked'}
+                <p class="desk-blocked">先完成前置：{practiceRow.blockers.map((blocker) => `${blocker.title}（${blocker.reason}）`).join('、')}，过关后再来练这一项。</p>
+              {:else if practiceRow.status === 'removed'}
+                <p class="desk-blocked muted">该活动已移出课程，不能再记录新成绩，历史记录如下。</p>
+              {:else}
+                <TextInput labelText="本次得分（0–100）" type="number" min="0" max="100" value={practiceScore} invalid={Boolean(practiceError)} invalidText={practiceError} on:input={(event) => practiceScore = readText(event)} />
+                <span class="mini-kicker">读错的音素（点选）</span>
+                <div class="chip-row">
+                  {#each practiceRow.phonemes as phoneme}
+                    <button type="button" class:marked={practiceMissed.includes(phoneme)} class="phoneme-chip" on:click={() => toggleMissedPhoneme(phoneme)}>{phoneme}</button>
+                  {:else}
+                    <span class="empty-state">该活动没有登记音素，可在下方补充。</span>
+                  {/each}
+                </div>
+                <TextInput size="sm" labelText="其他读错音素（逗号或空格分隔）" value={practiceMissedExtra} on:input={(event) => practiceMissedExtra = readText(event)} />
+                <div class="desk-actions"><Button size="small" kind="primary" on:click={recordAttempt}>记下本次结果</Button></div>
+              {/if}
+              {#if practiceRow.attemptCount && selectedStudent}
+                <div class="attempt-history">
+                  <span class="mini-kicker">本活动练习记录</span>
+                  {#each attemptsFor(selectedStudent, practiceRow.activityId).slice().reverse() as attempt (attempt.id)}
+                    <div class="attempt-row">
+                      <b class:low={attempt.score < PASS_SCORE}>{attempt.score}</b>
+                      <span>{#if attempt.missedPhonemes.length}读错 {attempt.missedPhonemes.join(' ')}{:else}全部读对{/if}</span>
+                      <small>{formatTime(attempt.practicedAt)}</small>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            {:else}
+              <p class="empty-state">从中间列表选一项活动，在这里记录得分和读错的音素。</p>
+            {/if}
+          </Tile>
+        {/if}
+      </aside>
     </main>
   {/if}
 
