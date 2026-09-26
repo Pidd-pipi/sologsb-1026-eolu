@@ -13,7 +13,7 @@
   } from 'carbon-components-svelte';
 
   type ActivityType = '音素' | '单词' | '句子' | '练习';
-  type ViewMode = 'compose' | 'path' | 'issues' | 'versions';
+  type ViewMode = 'compose' | 'path' | 'issues' | 'versions' | 'students';
   type PreviewWidth = 'phone' | 'tablet' | 'desktop';
   type IssueLevel = 'error' | 'warning' | 'info';
 
@@ -66,7 +66,55 @@
     detail: string;
   }
 
+  interface PracticeAttempt {
+    id: string;
+    score: number;
+    missedPhonemes: string[];
+    practicedAt: string;
+  }
+
+  interface StudentAssignment {
+    activityId: string;
+    activityTitle: string;
+    activityType: ActivityType;
+    assignedAt: string;
+    attempts: PracticeAttempt[];
+  }
+
+  interface Student {
+    id: string;
+    name: string;
+    createdAt: string;
+    assignments: StudentAssignment[];
+  }
+
+  interface AssignmentBlocker {
+    id: string;
+    title: string;
+    reason: '未布置' | '未过关';
+  }
+
+  interface AssignmentRow {
+    assignment: StudentAssignment;
+    activity: Activity | null;
+    blockers: AssignmentBlocker[];
+    passed: boolean;
+    bestScore: number | null;
+    streak: number;
+  }
+
+  interface RosterEntry {
+    student: Student;
+    passed: number;
+    total: number;
+    stuckTitle: string;
+    stuckReason: string;
+  }
+
   const STORAGE_KEY = 'sologsb-1026-phonics-course-v1';
+  const STUDENTS_KEY = 'sologsb-1026-phonics-students-v1';
+  const PASS_SCORE = 80;
+  const PASS_STREAK = 2;
   const confusablePairs = [
     ['/b/', '/p/'], ['/d/', '/t/'], ['/f/', '/v/'], ['/m/', '/n/'], ['/ɪ/', '/iː/'], ['/æ/', '/e/']
   ];
@@ -172,6 +220,17 @@
   let selectedActivity: Activity | null = null;
   let diagnostics: Diagnostic[] = [];
   let versionDiff: VersionDiff[] = [];
+  let students: Student[] = [];
+  let selectedStudentId = '';
+  let newStudentName = '';
+  let attemptDrafts: Record<string, { score: string; missed: string }> = {};
+  let selectedStudent: Student | null = null;
+  let studentRows: AssignmentRow[] = [];
+  let unassignedActivities: Activity[] = [];
+  let passedCount = 0;
+  let blockedRows: AssignmentRow[] = [];
+  let blockedSummary = '';
+  let rosterEntries: RosterEntry[] = [];
 
   $: selectedActivity = course.activities.find((activity) => activity.id === selectedActivityId) ?? course.activities[0] ?? null;
   $: diagnostics = analyzeCourse(course);
@@ -179,6 +238,17 @@
   $: errorCount = diagnostics.filter((issue) => issue.level === 'error').length;
   $: warningCount = diagnostics.filter((issue) => issue.level === 'warning').length;
   $: totalMinutes = course.activities.reduce((sum, activity) => sum + activity.duration, 0);
+  $: selectedStudent = students.find((student) => student.id === selectedStudentId) ?? students[0] ?? null;
+  $: studentRows = selectedStudent ? buildAssignmentRows(selectedStudent, course) : [];
+  $: unassignedActivities = selectedStudent
+    ? course.activities.filter((activity) => !selectedStudent?.assignments.some((assignment) => assignment.activityId === activity.id))
+    : [];
+  $: passedCount = studentRows.filter((row) => row.activity && row.passed).length;
+  $: blockedRows = studentRows.filter((row) => row.activity && !row.passed && row.blockers.length > 0);
+  $: blockedSummary = blockedRows
+    .map((row) => `《${row.activity?.title ?? row.assignment.activityTitle}》等待 ${row.blockers.map((blocker) => `《${blocker.title}》${blocker.reason}`).join('、')}`)
+    .join('；');
+  $: rosterEntries = students.map((student) => ({ student, ...summarizeStudent(student, course) }));
 
   onMount(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -193,6 +263,7 @@
         localStorage.removeItem(STORAGE_KEY);
       }
     }
+    loadStudents();
     hydrated = true;
     const updateNetwork = () => {
       online = navigator.onLine;
@@ -507,6 +578,177 @@
     return rows;
   }
 
+  function loadStudents(): void {
+    const stored = localStorage.getItem(STUDENTS_KEY);
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as Student[];
+      if (!Array.isArray(parsed)) return;
+      students = parsed.filter((student) => student && student.id && Array.isArray(student.assignments));
+      selectedStudentId = students[0]?.id ?? '';
+    } catch {
+      localStorage.removeItem(STUDENTS_KEY);
+    }
+  }
+
+  function persistStudents(): void {
+    if (!hydrated) return;
+    localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
+  }
+
+  function addStudent(): void {
+    const name = newStudentName.trim();
+    if (!name) return;
+    const student: Student = { id: `s-${Date.now()}`, name, createdAt: new Date().toISOString(), assignments: [] };
+    students = [...students, student];
+    selectedStudentId = student.id;
+    newStudentName = '';
+    persistStudents();
+  }
+
+  function removeStudent(id: string): void {
+    const student = students.find((item) => item.id === id);
+    if (!student) return;
+    if (!window.confirm(`删除学生「${student.name}」及其全部补练记录？此操作不可撤销。`)) return;
+    students = students.filter((item) => item.id !== id);
+    persistStudents();
+  }
+
+  function assignActivityToStudent(activityId: string): void {
+    if (!selectedStudent) return;
+    const activity = course.activities.find((item) => item.id === activityId);
+    if (!activity) return;
+    const studentId = selectedStudent.id;
+    students = students.map((student) => student.id === studentId
+      ? {
+          ...student,
+          assignments: [...student.assignments, {
+            activityId, activityTitle: activity.title, activityType: activity.type,
+            assignedAt: new Date().toISOString(), attempts: []
+          }]
+        }
+      : student);
+    persistStudents();
+  }
+
+  function unassignActivity(activityId: string): void {
+    if (!selectedStudent) return;
+    const studentId = selectedStudent.id;
+    students = students.map((student) => student.id === studentId
+      ? { ...student, assignments: student.assignments.filter((assignment) => assignment.activityId !== activityId) }
+      : student);
+    persistStudents();
+  }
+
+  function isAssignmentPassed(assignment: StudentAssignment): boolean {
+    const attempts = assignment.attempts;
+    if (attempts.length < PASS_STREAK) return false;
+    return attempts.slice(-PASS_STREAK).every((attempt) => attempt.score >= PASS_SCORE);
+  }
+
+  function trailingStreak(assignment: StudentAssignment): number {
+    let streak = 0;
+    for (let index = assignment.attempts.length - 1; index >= 0; index -= 1) {
+      if (assignment.attempts[index].score >= PASS_SCORE) streak += 1;
+      else break;
+    }
+    return Math.min(streak, PASS_STREAK);
+  }
+
+  function buildAssignmentRows(student: Student, current: Course): AssignmentRow[] {
+    const order = new Map(current.activities.map((activity, index) => [activity.id, index]));
+    return student.assignments.map((assignment) => {
+      const activity = current.activities.find((item) => item.id === assignment.activityId) ?? null;
+      const blockers: AssignmentBlocker[] = activity
+        ? activity.dependencies.flatMap((dependencyId): AssignmentBlocker[] => {
+            const dependencyActivity = current.activities.find((item) => item.id === dependencyId);
+            if (!dependencyActivity) return [];
+            const dependencyAssignment = student.assignments.find((item) => item.activityId === dependencyId);
+            if (!dependencyAssignment) return [{ id: dependencyId, title: dependencyActivity.title, reason: '未布置' }];
+            if (!isAssignmentPassed(dependencyAssignment)) return [{ id: dependencyId, title: dependencyActivity.title, reason: '未过关' }];
+            return [];
+          })
+        : [];
+      const scores = assignment.attempts.map((attempt) => attempt.score);
+      return {
+        assignment, activity, blockers,
+        passed: isAssignmentPassed(assignment),
+        bestScore: scores.length ? Math.max(...scores) : null,
+        streak: trailingStreak(assignment)
+      };
+    }).sort((left, right) => {
+      const leftIndex = order.get(left.assignment.activityId);
+      const rightIndex = order.get(right.assignment.activityId);
+      if (leftIndex !== undefined && rightIndex !== undefined) return leftIndex - rightIndex;
+      if (leftIndex !== undefined) return -1;
+      if (rightIndex !== undefined) return 1;
+      return left.assignment.assignedAt.localeCompare(right.assignment.assignedAt);
+    });
+  }
+
+  function summarizeStudent(student: Student, current: Course): Omit<RosterEntry, 'student'> {
+    const rows = buildAssignmentRows(student, current).filter((row) => row.activity);
+    const stuck = rows.find((row) => !row.passed && row.blockers.length > 0);
+    return {
+      passed: rows.filter((row) => row.passed).length,
+      total: rows.length,
+      stuckTitle: stuck ? stuck.activity?.title ?? stuck.assignment.activityTitle : '',
+      stuckReason: stuck ? stuck.blockers.map((blocker) => `《${blocker.title}》${blocker.reason}`).join('、') : ''
+    };
+  }
+
+  function rowStatus(row: AssignmentRow): { label: string; kind: 'green' | 'red' | 'blue' | 'cool-gray' | 'warm-gray' } {
+    if (!row.activity) return { label: '已移出课程', kind: 'warm-gray' };
+    if (row.passed) return { label: '已过关', kind: 'green' };
+    if (row.blockers.length) return { label: '被前置挡住', kind: 'red' };
+    if (row.assignment.attempts.length) return { label: '补练中', kind: 'blue' };
+    return { label: '待开始', kind: 'cool-gray' };
+  }
+
+  function draftKey(activityId: string): string {
+    return `${selectedStudent?.id ?? ''}:${activityId}`;
+  }
+
+  function draftFor(activityId: string): { score: string; missed: string } {
+    const key = draftKey(activityId);
+    attemptDrafts[key] ??= { score: '', missed: '' };
+    return attemptDrafts[key];
+  }
+
+  function setDraft(activityId: string, field: 'score' | 'missed', value: string): void {
+    attemptDrafts = { ...attemptDrafts, [draftKey(activityId)]: { ...draftFor(activityId), [field]: value } };
+  }
+
+  function addMissedPhoneme(activityId: string, phoneme: string): void {
+    const parts = draftFor(activityId).missed.split(/[\s,，、]+/).filter(Boolean);
+    if (!parts.includes(phoneme)) parts.push(phoneme);
+    setDraft(activityId, 'missed', parts.join(' '));
+  }
+
+  function canRecord(activityId: string): boolean {
+    const raw = draftFor(activityId).score.trim();
+    if (!raw) return false;
+    const score = Number(raw);
+    return Number.isFinite(score) && score >= 0 && score <= 100;
+  }
+
+  function recordAttempt(activityId: string): void {
+    if (!selectedStudent || !canRecord(activityId)) return;
+    const score = Math.round(Number(draftFor(activityId).score));
+    const missed = draftFor(activityId).missed.split(/[\s,，、]+/).map((item) => item.trim()).filter(Boolean);
+    const studentId = selectedStudent.id;
+    students = students.map((student) => student.id === studentId
+      ? {
+          ...student,
+          assignments: student.assignments.map((assignment) => assignment.activityId === activityId
+            ? { ...assignment, attempts: [...assignment.attempts, { id: `p-${Date.now()}`, score, missedPhonemes: missed, practicedAt: new Date().toISOString() }] }
+            : assignment)
+        }
+      : student);
+    attemptDrafts = { ...attemptDrafts, [draftKey(activityId)]: { score: '', missed: '' } };
+    persistStudents();
+  }
+
   function formatTime(value: string): string {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
@@ -597,6 +839,7 @@
     <button class:active={activeView === 'path'} on:click={() => activeView = 'path'}><span>02</span><b>学习路径</b><small>多屏幕顺序预览</small></button>
     <button class:active={activeView === 'issues'} on:click={() => activeView = 'issues'}><span>03</span><b>质量检查</b><small>音素、句子与反馈</small></button>
     <button class:active={activeView === 'versions'} on:click={() => activeView = 'versions'}><span>04</span><b>版本与复用</b><small>复制、存档与比较</small></button>
+    <button class:active={activeView === 'students'} on:click={() => activeView = 'students'}><span>05</span><b>学生补练</b><small>布置、记录与过关</small></button>
   </nav>
 
   {#if activeView === 'compose'}
@@ -802,6 +1045,174 @@
             {/each}
           </div>
         </Tile>
+      </div>
+    </main>
+  {/if}
+
+  {#if activeView === 'students'}
+    <main class="students-view">
+      <div class="view-heading">
+        <div>
+          <span class="kicker">REMEDIAL PRACTICE</span>
+          <h2>学生补练册</h2>
+          <p>给学生布置课程活动，记录每次补练得分与读错的音素；连续两次达到 {PASS_SCORE} 分才算过关，未过关的前置活动会挡住后续补练。</p>
+        </div>
+        <div class="issue-summary">
+          <span><b>{students.length}</b> 学生</span>
+          <span><b>{rosterEntries.reduce((sum, entry) => sum + entry.passed, 0)}</b> 已过关项</span>
+          <span><b>{rosterEntries.filter((entry) => entry.stuckTitle).length}</b> 被前置挡住</span>
+        </div>
+      </div>
+
+      <div class="students-layout">
+        <aside class="roster-panel">
+          <div class="sidebar-heading">
+            <div><span class="kicker">ROSTER</span><h3>学生名单</h3></div>
+          </div>
+          <div class="roster-add">
+            <TextInput size="sm" labelText="学生姓名" placeholder="例如：小雨" value={newStudentName} on:input={(event) => newStudentName = readText(event)} on:keydown={(event) => { if (event.key === 'Enter') addStudent(); }} />
+            <Button size="small" kind="primary" disabled={!newStudentName.trim()} on:click={addStudent}>添加学生</Button>
+          </div>
+          <div class="roster-list">
+            {#each rosterEntries as entry (entry.student.id)}
+              <button class:selected={entry.student.id === selectedStudent?.id} class="roster-row" on:click={() => selectedStudentId = entry.student.id}>
+                <span class="roster-avatar">{entry.student.name.slice(0, 1)}</span>
+                <span class="roster-copy">
+                  <b>{entry.student.name}</b>
+                  <small>{entry.total ? `过关 ${entry.passed}/${entry.total} 项` : '尚未布置活动'}</small>
+                  {#if entry.stuckTitle}<small class="stuck">卡在《{entry.stuckTitle}》</small>{/if}
+                </span>
+                {#if entry.stuckTitle}<i class="stuck-dot" title={entry.stuckReason}></i>{/if}
+              </button>
+            {:else}
+              <p class="empty-state roster-empty">还没有学生。先添加一名学生，再为他布置课程活动。</p>
+            {/each}
+          </div>
+        </aside>
+
+        <section class="student-detail">
+          {#if selectedStudent}
+            <div class="editor-toolbar">
+              <div>
+                <span class="kicker">STUDENT BOOK</span>
+                <h3>{selectedStudent.name} 的补练册</h3>
+                <p class="student-sub">加入于 {formatTime(selectedStudent.createdAt)} · 已布置 {studentRows.length} 项 · 过关 {passedCount} 项</p>
+              </div>
+              <Button size="small" kind="danger-ghost" on:click={() => removeStudent(selectedStudent.id)}>删除学生</Button>
+            </div>
+
+            {#if blockedRows.length}
+              <div class="stuck-banner">
+                <InlineNotification lowContrast hideCloseButton kind="warning" title={`${selectedStudent.name} 有 ${blockedRows.length} 项补练被前置活动挡住`} subtitle={blockedSummary} />
+              </div>
+            {/if}
+
+            <Tile class="assign-card">
+              <div class="section-title">
+                <div><span class="kicker">ASSIGN</span><h3>布置课程活动</h3><p>新加入课程的活动不会自动布置，需要老师逐项安排。</p></div>
+                <Tag type="cool-gray">{unassignedActivities.length} 项待布置</Tag>
+              </div>
+              <div class="assign-list">
+                {#each unassignedActivities as activity (activity.id)}
+                  <div class="assign-row">
+                    <span class="activity-type {activity.type}">{activity.type}</span>
+                    <span class="assign-copy"><b>{activity.title}</b><small>{activity.phonemes.join(' ') || '未标记音素'} · {activity.duration} 分钟 · 难度 {activity.difficulty}/5</small></span>
+                    <Button size="small" kind="tertiary" on:click={() => assignActivityToStudent(activity.id)}>布置</Button>
+                  </div>
+                {:else}
+                  <p class="empty-state">当前课程活动都已布置给 {selectedStudent.name}。</p>
+                {/each}
+              </div>
+            </Tile>
+
+            <div class="section-title records-heading">
+              <div><span class="kicker">PRACTICE LOG</span><h3>补练记录</h3><p>按课程顺序排列；已移出课程的活动保留在末尾作为历史，记录仍跟随原活动。</p></div>
+              <Tag type={blockedRows.length ? 'red' : 'green'}>{blockedRows.length ? `${blockedRows.length} 项被挡住` : '没有被挡住的补练'}</Tag>
+            </div>
+
+            {#each studentRows as row (row.assignment.activityId)}
+              {@const status = rowStatus(row)}
+              <article class="record-card" class:removed={!row.activity} class:blocked={Boolean(row.activity && !row.passed && row.blockers.length)}>
+                <header>
+                  <span class="activity-type {row.activity ? row.activity.type : row.assignment.activityType}">{row.activity ? row.activity.type : row.assignment.activityType}</span>
+                  <div class="record-title">
+                    <b>{row.activity ? row.activity.title : row.assignment.activityTitle}</b>
+                    <small>
+                      布置于 {formatTime(row.assignment.assignedAt)}
+                      {#if row.activity && row.activity.title !== row.assignment.activityTitle} · 活动已改名，原布置名「{row.assignment.activityTitle}」{/if}
+                      {#if !row.activity} · 该活动已移出课程，记录保留为历史{/if}
+                    </small>
+                  </div>
+                  <Tag type={status.kind}>{status.label}</Tag>
+                </header>
+
+                {#if row.activity && !row.passed && row.blockers.length}
+                  <p class="blocker-line">卡在：{row.blockers.map((blocker) => `《${blocker.title}》${blocker.reason}`).join('、')}，完成后即可继续本项。</p>
+                {/if}
+
+                <div class="record-stats">
+                  <span>尝试 {row.assignment.attempts.length} 次</span>
+                  <span>最高 {row.bestScore ?? '—'} 分</span>
+                  <span>连续达标 {row.streak}/{PASS_STREAK}</span>
+                </div>
+
+                {#if row.assignment.attempts.length}
+                  <table class="attempt-table">
+                    <thead><tr><th>#</th><th>时间</th><th>得分</th><th>读错的音素</th></tr></thead>
+                    <tbody>
+                      {#each row.assignment.attempts as attempt, index (attempt.id)}
+                        <tr>
+                          <td>{index + 1}</td>
+                          <td>{formatTime(attempt.practicedAt)}</td>
+                          <td class:pass={attempt.score >= PASS_SCORE} class:fail={attempt.score < PASS_SCORE}>{attempt.score}</td>
+                          <td>
+                            {#if attempt.missedPhonemes.length}
+                              {#each attempt.missedPhonemes as phoneme}<span class="missed-chip">{phoneme}</span>{/each}
+                            {:else}
+                              —
+                            {/if}
+                          </td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                {:else}
+                  <p class="empty-state">还没有补练记录。</p>
+                {/if}
+
+                {#if !row.activity}
+                  <p class="removed-line">活动已移出课程，不再新增补练；历史记录继续跟随原活动保留。</p>
+                {:else if row.passed}
+                  <p class="passed-line">已过关：最近两次补练均达到 {PASS_SCORE} 分。</p>
+                {:else if row.blockers.length}
+                  <p class="blocked-line">先完成并过关前置活动，再记录本项补练。</p>
+                {:else}
+                  <div class="attempt-form">
+                    <TextInput size="sm" type="number" min="0" max="100" labelText="本次得分（0–100）" value={draftFor(row.assignment.activityId).score} on:input={(event) => setDraft(row.assignment.activityId, 'score', readText(event))} />
+                    <TextInput size="sm" labelText="读错的音素（空格或逗号分隔）" placeholder="例如：/æ/ /t/" value={draftFor(row.assignment.activityId).missed} on:input={(event) => setDraft(row.assignment.activityId, 'missed', readText(event))} />
+                    <Button size="small" kind="primary" disabled={!canRecord(row.assignment.activityId)} on:click={() => recordAttempt(row.assignment.activityId)}>记录结果</Button>
+                  </div>
+                  {#if row.activity.phonemes.length}
+                    <div class="phoneme-quick">
+                      <span>快速标记读错：</span>
+                      {#each row.activity.phonemes as phoneme}
+                        <button type="button" on:click={() => addMissedPhoneme(row.assignment.activityId, phoneme)}>{phoneme}</button>
+                      {/each}
+                    </div>
+                  {/if}
+                {/if}
+
+                {#if row.assignment.attempts.length === 0}
+                  <button type="button" class="unassign" on:click={() => unassignActivity(row.assignment.activityId)}>撤销布置</button>
+                {/if}
+              </article>
+            {:else}
+              <Tile class="all-clear"><h3>还没有布置活动</h3><p>从上方“布置课程活动”中为 {selectedStudent.name} 安排第一项补练。</p></Tile>
+            {/each}
+          {:else}
+            <Tile class="all-clear"><h3>先添加一名学生</h3><p>在左侧名单里创建学生后，就能布置活动并记录补练结果。</p></Tile>
+          {/if}
+        </section>
       </div>
     </main>
   {/if}
